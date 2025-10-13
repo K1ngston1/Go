@@ -24,7 +24,21 @@ func medicinesHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		cursor, err := col.Find(context.TODO(), bson.M{})
+		// --- фільтрація через query parameters ---
+		filter := bson.M{}
+		query := r.URL.Query()
+
+		if name := strings.TrimSpace(query.Get("name")); name != "" {
+			filter["name"] = bson.M{"$regex": name, "$options": "i"} // пошук за частиною назви
+		}
+		if dosage := strings.TrimSpace(query.Get("dosage")); dosage != "" {
+			filter["dosage"] = bson.M{"$regex": dosage, "$options": "i"}
+		}
+		if manufacturer := strings.TrimSpace(query.Get("manufacturer")); manufacturer != "" {
+			filter["manufacturer"] = bson.M{"$regex": manufacturer, "$options": "i"}
+		}
+
+		cursor, err := col.Find(context.TODO(), filter)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

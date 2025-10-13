@@ -24,7 +24,26 @@ func staffHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		cursor, err := col.Find(context.TODO(), bson.M{})
+		// --- Фільтрація через query parameters ---
+		filter := bson.M{}
+		query := r.URL.Query()
+
+		// Фільтр за ім'ям
+		if name := strings.TrimSpace(query.Get("name")); name != "" {
+			filter["name"] = bson.M{"$regex": name, "$options": "i"}
+		}
+
+		// Фільтр за роллю
+		if role := strings.TrimSpace(query.Get("role")); role != "" {
+			filter["role"] = bson.M{"$regex": role, "$options": "i"}
+		}
+
+		// Фільтр за зміною (наприклад shift=Night)
+		if shift := strings.TrimSpace(query.Get("shift")); shift != "" {
+			filter["shift"] = bson.M{"$regex": shift, "$options": "i"}
+		}
+
+		cursor, err := col.Find(context.TODO(), filter)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -108,4 +127,10 @@ func staffMemberHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// Допоміжна функція для JSON
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
 }

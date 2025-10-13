@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 
 	"hospital-api/db"
@@ -14,9 +17,38 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// --- Middleware для логування ---
+func LoggingMiddlewareHospitals(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f, err := os.OpenFile("access.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Println("Cannot open log file:", err)
+		} else {
+			defer f.Close()
+			log.SetOutput(f)
+			log.Printf("%s %s\n", r.Method, r.URL.Path)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// --- Middleware для простої авторизації ---
+func AuthMiddlewareHospitals(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const apiKey = "my-secret-key"
+		key := r.Header.Get("X-API-KEY")
+		if key != apiKey {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// --- Реєстрація маршрутів ---
 func HospitalRoutes() {
-	http.HandleFunc("/hospitals", hospitalsHandler)
-	http.HandleFunc("/hospitals/", hospitalHandler)
+	http.Handle("/hospitals", LoggingMiddlewareHospitals(AuthMiddlewareHospitals(http.HandlerFunc(hospitalsHandler))))
+	http.Handle("/hospitals/", LoggingMiddlewareHospitals(AuthMiddlewareHospitals(http.HandlerFunc(hospitalHandler))))
 }
 
 func hospitalsHandler(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +56,47 @@ func hospitalsHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		cursor, err := col.Find(context.TODO(), bson.M{})
+		// --- Фільтрація ---
+		filter := bson.M{}
+		query := r.URL.Query()
+
+		// Фільтр за назвою
+		if name := strings.TrimSpace(query.Get("name")); name != "" {
+			filter["name"] = bson.M{"$regex": name, "$options": "i"}
+		}
+
+		// Фільтр за містом
+		if city := strings.TrimSpace(query.Get("city")); city != "" {
+			filter["city"] = bson.M{"$regex": city, "$options": "i"}
+		}
+
+		// Фільтр за кількістю ліжок (точно або діапазон)
+		if bedsStr := strings.TrimSpace(query.Get("beds")); bedsStr != "" {
+			if bedsInt, err := strconv.Atoi(bedsStr); err == nil {
+				filter["beds"] = bedsInt
+			}
+		} else {
+			minBedsStr := query.Get("minBeds")
+			maxBedsStr := query.Get("maxBeds")
+			rangeFilter := bson.M{}
+
+			if minBedsStr != "" {
+				if minBeds, err := strconv.Atoi(minBedsStr); err == nil {
+					rangeFilter["$gte"] = minBeds
+				}
+			}
+			if maxBedsStr != "" {
+				if maxBeds, err := strconv.Atoi(maxBedsStr); err == nil {
+					rangeFilter["$lte"] = maxBeds
+				}
+			}
+			if len(rangeFilter) > 0 {
+				filter["beds"] = rangeFilter
+			}
+		}
+
+		// --- Отримання з бази ---
+		cursor, err := col.Find(context.TODO(), filter)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -36,7 +108,7 @@ func hospitalsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, hospitals)
+		writeJSONHospitals(w, hospitals)
 
 	case http.MethodPost:
 		var hospital models.Hospital
@@ -51,7 +123,7 @@ func hospitalsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		hospital.ID = res.InsertedID.(primitive.ObjectID)
-		writeJSON(w, hospital)
+		writeJSONHospitals(w, hospital)
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -72,10 +144,10 @@ func hospitalHandler(w http.ResponseWriter, r *http.Request) {
 		var hospital models.Hospital
 		err := col.FindOne(context.TODO(), bson.M{"_id": objID}).Decode(&hospital)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			http.Error(w, "Hospital not found", http.StatusNotFound)
 			return
 		}
-		writeJSON(w, hospital)
+		writeJSONHospitals(w, hospital)
 
 	case http.MethodPut:
 		var update models.Hospital
@@ -102,7 +174,7 @@ func hospitalHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func writeJSON(w http.ResponseWriter, v interface{}) {
+func writeJSONHospitals(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
 }

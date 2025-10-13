@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"hospital-api/db"
@@ -57,18 +58,48 @@ func departmentsHandler(w http.ResponseWriter, r *http.Request) {
 		// Фільтр через query params
 		filter := bson.M{}
 		query := r.URL.Query()
-		if name := query.Get("name"); name != "" {
-			filter["name"] = name
+
+		// Пошук по імені (частковий, нечутливий до регістру)
+		if name := strings.TrimSpace(query.Get("name")); name != "" {
+			filter["name"] = bson.M{"$regex": name, "$options": "i"}
 		}
-		if hospital := query.Get("hospitalId"); hospital != "" {
+
+		// Пошук по hospitalId
+		if hospital := strings.TrimSpace(query.Get("hospitalId")); hospital != "" {
 			if objID, err := primitive.ObjectIDFromHex(hospital); err == nil {
 				filter["hospital_id"] = objID
 			}
 		}
-		if floor := query.Get("floor"); floor != "" {
-			filter["floor"] = floor
+
+		// Пошук по floor (точне значення або діапазон)
+		if floorStr := strings.TrimSpace(query.Get("floor")); floorStr != "" {
+			if floorInt, err := strconv.Atoi(floorStr); err == nil {
+				filter["floor"] = floorInt
+			} else {
+				filter["floor"] = floorStr
+			}
+		} else {
+			// Підтримка minFloor / maxFloor
+			minFloorStr := strings.TrimSpace(query.Get("minFloor"))
+			maxFloorStr := strings.TrimSpace(query.Get("maxFloor"))
+			rangeFilter := bson.M{}
+
+			if minFloorStr != "" {
+				if minFloor, err := strconv.Atoi(minFloorStr); err == nil {
+					rangeFilter["$gte"] = minFloor
+				}
+			}
+			if maxFloorStr != "" {
+				if maxFloor, err := strconv.Atoi(maxFloorStr); err == nil {
+					rangeFilter["$lte"] = maxFloor
+				}
+			}
+			if len(rangeFilter) > 0 {
+				filter["floor"] = rangeFilter
+			}
 		}
 
+		// Виконуємо запит до MongoDB
 		cursor, err := col.Find(context.TODO(), filter)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -81,6 +112,7 @@ func departmentsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
 		writeJSONDepartments(w, departments)
 
 	case http.MethodPost:
