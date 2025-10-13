@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -15,9 +17,35 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+func LoggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f, err := os.OpenFile("access.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Println("Cannot open log file:", err)
+		} else {
+			defer f.Close()
+			log.SetOutput(f)
+			log.Printf("%s %s\n", r.Method, r.URL.Path)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const apiKey = "my-secret-key"
+		key := r.Header.Get("X-API-KEY")
+		if key != apiKey {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func AppointmentRoutes() {
-	http.HandleFunc("/appointments", appointmentsHandler)
-	http.HandleFunc("/appointments/", appointmentHandler)
+	http.Handle("/appointments", LoggingMiddleware(AuthMiddleware(http.HandlerFunc(appointmentsHandler))))
+	http.Handle("/appointments/", LoggingMiddleware(AuthMiddleware(http.HandlerFunc(appointmentHandler))))
 }
 
 func appointmentsHandler(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +53,27 @@ func appointmentsHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		cursor, err := col.Find(context.TODO(), bson.M{})
+		filter := bson.M{}
+		query := r.URL.Query()
+		if patient := query.Get("patientId"); patient != "" {
+			if objID, err := primitive.ObjectIDFromHex(patient); err == nil {
+				filter["patientId"] = objID
+			}
+		}
+		if doctor := query.Get("doctorId"); doctor != "" {
+			if objID, err := primitive.ObjectIDFromHex(doctor); err == nil {
+				filter["doctorId"] = objID
+			}
+		}
+		if dateStr := query.Get("date"); dateStr != "" {
+			if date, err := time.Parse("2006-01-02", dateStr); err == nil {
+				start := date
+				end := date.Add(24 * time.Hour)
+				filter["date"] = bson.M{"$gte": start, "$lt": end}
+			}
+		}
+
+		cursor, err := col.Find(context.TODO(), filter)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -37,7 +85,7 @@ func appointmentsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, appointments)
+		writeJSONApointemnt(w, appointments)
 
 	case http.MethodPost:
 		var appointment models.Appointment
@@ -45,8 +93,6 @@ func appointmentsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-
-		// Якщо дата не передана, ставимо поточну
 		if appointment.Date.IsZero() {
 			appointment.Date = time.Now()
 		}
@@ -81,7 +127,7 @@ func appointmentHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Appointment not found", http.StatusNotFound)
 			return
 		}
-		writeJSON(w, appointment)
+		writeJSONApointemnt(w, appointment)
 
 	case http.MethodPut:
 		var update models.Appointment
@@ -114,4 +160,10 @@ func appointmentHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// Допоміжна функція для JSON відповіді
+func writeJSONApointemnt(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
 }

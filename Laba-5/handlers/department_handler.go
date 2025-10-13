@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"hospital-api/db"
@@ -14,9 +16,37 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// Middleware для логування
+func LoggingMiddlewareDepartments(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f, err := os.OpenFile("access.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Println("Cannot open log file:", err)
+		} else {
+			defer f.Close()
+			log.SetOutput(f)
+			log.Printf("%s %s\n", r.Method, r.URL.Path)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Middleware для простого ключа авторизації
+func AuthMiddlewareDepartments(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const apiKey = "my-secret-key"
+		key := r.Header.Get("X-API-KEY")
+		if key != apiKey {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func DepartmentRoutes() {
-	http.HandleFunc("/departments", departmentsHandler)
-	http.HandleFunc("/departments/", departmentHandler)
+	http.Handle("/departments", LoggingMiddlewareDepartments(AuthMiddlewareDepartments(http.HandlerFunc(departmentsHandler))))
+	http.Handle("/departments/", LoggingMiddlewareDepartments(AuthMiddlewareDepartments(http.HandlerFunc(departmentHandler))))
 }
 
 func departmentsHandler(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +54,22 @@ func departmentsHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		cursor, err := col.Find(context.TODO(), bson.M{})
+		// Фільтр через query params
+		filter := bson.M{}
+		query := r.URL.Query()
+		if name := query.Get("name"); name != "" {
+			filter["name"] = name
+		}
+		if hospital := query.Get("hospitalId"); hospital != "" {
+			if objID, err := primitive.ObjectIDFromHex(hospital); err == nil {
+				filter["hospital_id"] = objID
+			}
+		}
+		if floor := query.Get("floor"); floor != "" {
+			filter["floor"] = floor
+		}
+
+		cursor, err := col.Find(context.TODO(), filter)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -36,7 +81,7 @@ func departmentsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, departments)
+		writeJSONDepartments(w, departments)
 
 	case http.MethodPost:
 		var department models.Department
@@ -51,7 +96,7 @@ func departmentsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		department.ID = res.InsertedID.(primitive.ObjectID)
-		writeJSON(w, department)
+		writeJSONDepartments(w, department)
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -75,7 +120,7 @@ func departmentHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Department not found", http.StatusNotFound)
 			return
 		}
-		writeJSON(w, department)
+		writeJSONDepartments(w, department)
 
 	case http.MethodPut:
 		var update models.Department
@@ -108,4 +153,10 @@ func departmentHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// Допоміжна функція для JSON відповіді
+func writeJSONDepartments(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
 }
