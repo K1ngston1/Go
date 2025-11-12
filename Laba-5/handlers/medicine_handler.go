@@ -15,12 +15,12 @@ import (
 )
 
 func MedicineRoutes() {
-	http.HandleFunc("/medicines", medicinesHandler)
-	http.HandleFunc("/medicines/", medicineHandler)
+	http.HandleFunc("/medications", medicinesHandler)
+	http.HandleFunc("/medications/", medicineHandler)
 }
 
 func medicinesHandler(w http.ResponseWriter, r *http.Request) {
-	col := db.Client.Database("hospitaldb").Collection("medicines")
+	col := db.Client.Database("hospital_db").Collection("medications")
 
 	switch r.Method {
 	case http.MethodGet:
@@ -73,8 +73,8 @@ func medicinesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func medicineHandler(w http.ResponseWriter, r *http.Request) {
-	col := db.Client.Database("hospitaldb").Collection("medicines")
-	id := strings.TrimPrefix(r.URL.Path, "/medicines/")
+	col := db.Client.Database("hospital_db").Collection("medications")
+	id := strings.TrimPrefix(r.URL.Path, "/medications/")
 	objID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
 		http.Error(w, "Invalid ID", http.StatusBadRequest)

@@ -17,6 +17,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// Middleware для логування
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f, err := os.OpenFile("access.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -31,25 +32,23 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func AuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		const apiKey = "my-secret-key"
-		key := r.Header.Get("X-API-KEY")
-		if key != apiKey {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
+// Реєстрація маршрутів
 func AppointmentRoutes() {
-	http.Handle("/appointments", LoggingMiddleware(AuthMiddleware(http.HandlerFunc(appointmentsHandler))))
-	http.Handle("/appointments/", LoggingMiddleware(AuthMiddleware(http.HandlerFunc(appointmentHandler))))
+	http.Handle("/login", LoggingMiddleware(http.HandlerFunc(LoginHandler)))
+
+	// GET дозволений reader і admin
+	http.Handle("/appointments", LoggingMiddleware(
+		JWTAuthMiddleware(http.HandlerFunc(appointmentsHandler), "reader", "admin"),
+	))
+	http.Handle("/appointments/", LoggingMiddleware(
+		JWTAuthMiddleware(http.HandlerFunc(appointmentHandler), "reader", "admin"),
+	))
 }
 
+// Обробник для списку зустрічей
 func appointmentsHandler(w http.ResponseWriter, r *http.Request) {
-	col := db.Client.Database("hospitaldb").Collection("appointments")
+	claims := GetClaims(r)
+	col := db.Client.Database("hospital_db").Collection("appointments")
 
 	switch r.Method {
 	case http.MethodGet:
@@ -88,6 +87,11 @@ func appointmentsHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONApointemnt(w, appointments)
 
 	case http.MethodPost:
+		if claims.Role != "admin" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
 		var appointment models.Appointment
 		if err := json.NewDecoder(r.Body).Decode(&appointment); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -103,15 +107,17 @@ func appointmentsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		appointment.ID = res.InsertedID.(primitive.ObjectID)
-		writeJSON(w, appointment)
+		writeJSONApointemnt(w, appointment)
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
+// Обробник для конкретної зустрічі
 func appointmentHandler(w http.ResponseWriter, r *http.Request) {
-	col := db.Client.Database("hospitaldb").Collection("appointments")
+	claims := GetClaims(r)
+	col := db.Client.Database("hospital_db").Collection("appointments")
 	id := strings.TrimPrefix(r.URL.Path, "/appointments/")
 	objID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -130,6 +136,11 @@ func appointmentHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONApointemnt(w, appointment)
 
 	case http.MethodPut:
+		if claims.Role != "admin" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
 		var update models.Appointment
 		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -150,6 +161,11 @@ func appointmentHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Appointment updated successfully")
 
 	case http.MethodDelete:
+		if claims.Role != "admin" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
 		_, err := col.DeleteOne(context.TODO(), bson.M{"_id": objID})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

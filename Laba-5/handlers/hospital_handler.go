@@ -52,7 +52,7 @@ func HospitalRoutes() {
 }
 
 func hospitalsHandler(w http.ResponseWriter, r *http.Request) {
-	col := db.Client.Database("hospitaldb").Collection("hospitals")
+	col := db.Client.Database("hospital_db").Collection("hospitals")
 
 	switch r.Method {
 	case http.MethodGet:

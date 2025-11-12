@@ -17,7 +17,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// Middleware для логування
 func LoggingMiddlewareDoctors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f, err := os.OpenFile("access.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -32,7 +31,6 @@ func LoggingMiddlewareDoctors(next http.Handler) http.Handler {
 	})
 }
 
-// Middleware для простого ключа авторизації
 func AuthMiddlewareDoctors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		const apiKey = "my-secret-key"
@@ -51,7 +49,7 @@ func DoctorRoutes() {
 }
 
 func doctorsHandler(w http.ResponseWriter, r *http.Request) {
-	col := db.Client.Database("hospitaldb").Collection("doctors")
+	col := db.Client.Database("hospital_db").Collection("doctors")
 
 	switch r.Method {
 	case http.MethodGet:
@@ -139,7 +137,7 @@ func doctorsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func doctorHandler(w http.ResponseWriter, r *http.Request) {
-	col := db.Client.Database("hospitaldb").Collection("doctors")
+	col := db.Client.Database("hospital_db").Collection("doctors")
 	id := strings.TrimPrefix(r.URL.Path, "/doctors/")
 	objID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {

@@ -51,7 +51,7 @@ func DepartmentRoutes() {
 }
 
 func departmentsHandler(w http.ResponseWriter, r *http.Request) {
-	col := db.Client.Database("hospitaldb").Collection("departments")
+	col := db.Client.Database("hospital_db").Collection("departments")
 
 	switch r.Method {
 	case http.MethodGet:
